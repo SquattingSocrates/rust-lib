@@ -93,7 +93,7 @@ mod config;
 mod error;
 mod function_process;
 mod macros;
-mod mailbox;
+pub mod mailbox;
 mod module;
 mod tag;
 

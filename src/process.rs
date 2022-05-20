@@ -79,6 +79,37 @@ pub trait AbstractProcess {
     /// This allows startups to be synchronized.
     fn init(this: ProcessRef<Self>, arg: Self::Arg) -> Self::State;
 
+    /// Entrypoint of main process loop. Many processes just wait for messages in their mailbox
+    /// but some other processes need to listen to other sources in order to produce messages for
+    /// other processes. With `run` it's possible to manipulate the internal loop
+    /// so that one can listen to other sources while still properly using AbstractProcess
+    /// and Supervisors as main construct for state encapsulation and separation of concerns
+    fn run(mailbox: LinkMailbox<Sendable, Bincode>, mut state: Self::State) {
+        // Run process forever and respond to requests.
+        loop {
+            let dispatcher = mailbox.tag_receive(None);
+            match dispatcher {
+                Ok(dispatcher) => match dispatcher {
+                    Sendable::Message(handler) => {
+                        let handler: fn(state: &mut Self::State) =
+                            unsafe { std::mem::transmute(handler) };
+                        handler(&mut state);
+                    }
+                    Sendable::Request(handler, sender) => {
+                        let handler: fn(state: &mut Self::State, sender: Process<()>) =
+                            unsafe { std::mem::transmute(handler) };
+                        handler(&mut state, sender);
+                    }
+                    Sendable::Shutdown => {
+                        Self::terminate(state);
+                        break;
+                    }
+                },
+                Err(link_trapped) => Self::handle_link_trapped(&mut state, link_trapped.tag()),
+            }
+        }
+    }
+
     /// Called when a `shutdown` command is received.
     fn terminate(_state: Self::State) {}
 
@@ -282,28 +313,7 @@ fn starter<T>(
     parent.tag_send(tag, ());
 
     let mailbox: LinkMailbox<Sendable, Bincode> = unsafe { LinkMailbox::new() };
-    // Run process forever and respond to requests.
-    loop {
-        let dispatcher = mailbox.tag_receive(None);
-        match dispatcher {
-            Ok(dispatcher) => match dispatcher {
-                Sendable::Message(handler) => {
-                    let handler: fn(state: &mut T::State) = unsafe { std::mem::transmute(handler) };
-                    handler(&mut state);
-                }
-                Sendable::Request(handler, sender) => {
-                    let handler: fn(state: &mut T::State, sender: Process<()>) =
-                        unsafe { std::mem::transmute(handler) };
-                    handler(&mut state, sender);
-                }
-                Sendable::Shutdown => {
-                    T::terminate(state);
-                    break;
-                }
-            },
-            Err(link_trapped) => T::handle_link_trapped(&mut state, link_trapped.tag()),
-        }
-    }
+    T::run(mailbox, state);
 
     // Unregister name
     if let Some(name) = name {
@@ -419,7 +429,7 @@ where
 //
 // The first `i32` value is a pointer
 #[derive(serde::Serialize, serde::Deserialize)]
-enum Sendable {
+pub enum Sendable {
     Message(i32),
     // The process type can't be carried over as a generic and is set here to `()`, but overwritten
     // at the time of returning with the correct type.

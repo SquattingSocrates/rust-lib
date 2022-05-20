@@ -126,7 +126,7 @@ pub enum ReceiveError {
 
 /// A special Mailbox that can catch if links trapped.
 #[derive(Debug)]
-pub(crate) struct LinkMailbox<M, S = Bincode>
+pub struct LinkMailbox<M, S = Bincode>
 where
     S: Serializer<M>,
 {
@@ -199,7 +199,7 @@ where
 
 #[derive(Error, Debug)]
 #[error("The link trapped")]
-pub(crate) struct LinkTrapped(Tag);
+pub struct LinkTrapped(Tag);
 
 impl LinkTrapped {
     pub(crate) fn tag(&self) -> Tag {
